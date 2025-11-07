@@ -1,14 +1,16 @@
 # Televideo CLI
 
-A high-performance command-line interface for browsing RAI Televideo, the Italian teletext service, written in Rust.
+A high-performance command-line interface for browsing RAI Televideo, the Italian teletext service, written in Rust. A fun side project with a pinch of nostalgia.
+
+![televideo-term](https://github.com/user-attachments/assets/d800add7-4c02-439f-9027-e1a6dbb514d4)
 
 ## Features
 
-- **High-quality image rendering** with automatic terminal protocol detection (iTerm2, Kitty, Sixel, or Unicode half-blocks)
-- **Full-screen TUI** with fixed header and footer bars
-- **Fast navigation** with arrow keys and direct page jumping
-- **5-minute caching** for faster page loads
-- **Navy blue status bars** with white text, classic teletext style
+- **High-quality image rendering** with automatic terminal protocol detection (iTerm2, Kitty, Sixel, or Unicode half-blocks).
+- **Full-screen TUI** with fixed header and footer bars.
+- **Fast navigation** with arrow keys and direct page jumping.
+- **5-minute caching** for faster page loads.
+- **Navy blue status bars** with white text, classic teletext style.
 
 ## Building the project
 
@@ -73,30 +75,6 @@ The application:
    - Unicode half-blocks (▄) as fallback
 3. Uses `ratatui` for precise TUI layout control (header always at top, footer at bottom)
 4. Implements a 5-minute cache to reduce server requests
-
-### URL pattern
-
-```
-http://www.televideo.rai.it/televideo/pub/tt4web/Nazionale/16_9_page-{PAGE}[.{PART}].png
-```
-
-## Technical details
-
-- **Language**: Rust
-- **TUI framework**: `ratatui` (Terminal User Interface library)
-- **Image rendering**: `ratatui-image` (automatic protocol detection)
-- **Terminal backend**: `crossterm` (cross-platform terminal manipulation)
-- **HTTP client**: `reqwest` (blocking mode)
-- **Image processing**: `image` crate for PNG decoding
-
-### Why Rust?
-
-The Rust version provides:
-- **Precise layout control** - ratatui's constraint-based layout prevents scrolling issues
-- **Better performance** - compiled binary with zero runtime overhead
-- **Memory safety** - no garbage collection pauses
-- **Cross-platform** - works on macOS, Linux, and Windows
-- **Superior image quality** - native terminal graphics protocols when available
 
 ## License
 
