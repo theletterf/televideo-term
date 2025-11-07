@@ -100,4 +100,4 @@ The Rust version provides:
 
 ## License
 
-ISC
+MIT
