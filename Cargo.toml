@@ -1,0 +1,16 @@
+[package]
+name = "televideo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "televideo"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+reqwest = { version = "0.12", features = ["blocking"] }
+image = "0.25"
+anyhow = "1.0"
+ratatui-image = "8.0"
