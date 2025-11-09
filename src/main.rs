@@ -1,7 +1,7 @@
 mod client;
 
 use anyhow::Result;
-use client::TelevideoClient;
+use client::{TelevideoClient, TelevideoPage};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -9,7 +9,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph},
@@ -18,37 +18,40 @@ use ratatui::{
 use ratatui_image::{picker::Picker, protocol::StatefulProtocol, Resize, StatefulImage};
 use std::io;
 
+#[derive(PartialEq, Clone, Copy)]
+enum DisplayMode {
+    Text,
+    Image,
+}
+
 struct App {
     client: TelevideoClient,
     current_page: u16,
     current_part: u16,
     page_input_buffer: String,
+    content: Option<TelevideoPage>,
     image_state: Option<StatefulProtocol>,
-    picker: Picker,
     error: Option<String>,
     message: Option<String>,
     loading: bool,
+    display_mode: DisplayMode,
+    picker: Picker,
 }
 
 impl App {
-    fn new() -> Self {
-        // Try to query the terminal for font size, or use a reasonable default
-        // If your terminal is iTerm2, this should work automatically
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| {
-            // Fallback to a more typical font size
-            // These values represent width x height in pixels per character cell
-            Picker::from_fontsize((10, 20))
-        });
+    fn new_with_picker(picker: Picker) -> Self {
         Self {
             client: TelevideoClient::new(),
             current_page: 100,
             current_part: 1,
             page_input_buffer: String::new(),
+            content: None,
             image_state: None,
-            picker,
             error: None,
             message: None,
             loading: false,
+            display_mode: DisplayMode::Text,
+            picker,
         }
     }
 
@@ -57,40 +60,51 @@ impl App {
         self.error = None;
         self.message = None;
 
-        match self.client.fetch_page(page, part) {
-            Ok(bytes) => {
-                // Load image from bytes
-                match image::load_from_memory(&bytes) {
-                    Ok(img) => {
-                        self.current_page = page;
-                        self.current_part = part;
-                        // Create a resizable protocol that will adapt to the render area
-                        let protocol = self.picker.new_resize_protocol(img);
-                        self.image_state = Some(protocol);
-                        self.loading = false;
-                    }
-                    Err(e) => {
-                        self.error = Some(format!("Failed to load image: {}", e));
-                        self.loading = false;
-                    }
-                }
+        // Load text content
+        let text_result = self.client.fetch_page(page, part);
+        match text_result {
+            Ok(page_content) => {
+                self.content = Some(page_content);
             }
             Err(e) => {
-                self.error = Some(format!("{}", e));
-                self.loading = false;
+                self.error = Some(format!("Text: {}", e));
             }
         }
+
+        // Load image content
+        let image_result = self.client.fetch_image(page, part);
+        match image_result {
+            Ok(img) => {
+                // Convert DynamicImage to Protocol using the picker
+                let protocol = self.picker.new_resize_protocol(img);
+                self.image_state = Some(protocol);
+            }
+            Err(e) => {
+                if self.error.is_none() {
+                    self.error = Some(format!("Image: {}", e));
+                }
+            }
+        }
+
+        self.current_page = page;
+        self.current_part = part;
+        self.loading = false;
     }
 }
 
 fn main() -> Result<()> {
+    // Create picker before entering raw mode to allow stdio queries
+    let picker = Picker::from_query_stdio().unwrap_or_else(|_| {
+        Picker::from_fontsize((8, 16))
+    });
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new_with_picker(picker);
     app.load_page(100, 1);
 
     let res = run_app(&mut terminal, &mut app);
@@ -128,6 +142,12 @@ fn run_app<B: ratatui::backend::Backend>(
                         app.client.clear_cache();
                         app.message = Some("Cache cleared!".to_string());
                         app.load_page(app.current_page, app.current_part);
+                    }
+                    KeyCode::Char('v') => {
+                        app.display_mode = match app.display_mode {
+                            DisplayMode::Text => DisplayMode::Image,
+                            DisplayMode::Image => DisplayMode::Text,
+                        };
                     }
                     KeyCode::Left => {
                         if app.current_page > 100 {
@@ -207,12 +227,66 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
 
     let content_area = chunks[1];
     if !app.loading {
-        if let Some(ref mut image_state) = app.image_state {
-            // Use Scale mode to resize the image to fill the available space
-            // The widget will maintain aspect ratio and center it automatically
-            let image_widget = StatefulImage::default()
-                .resize(Resize::Scale(None));
-            f.render_stateful_widget(image_widget, content_area, image_state);
+        match app.display_mode {
+            DisplayMode::Text => {
+                if let Some(ref page_content) = app.content {
+                    // Calculate vertical centering
+                    let content_height = page_content.lines.len();
+                    let available_height = content_area.height as usize;
+                    let vertical_padding = if content_height < available_height {
+                        (available_height - content_height) / 2
+                    } else {
+                        0
+                    };
+
+                    // Add vertical padding lines at the top
+                    let mut all_lines: Vec<Line> = vec![Line::from(""); vertical_padding];
+
+                    // Display the parsed content with horizontal centering
+                    let content_lines: Vec<Line> = page_content
+                        .lines
+                        .iter()
+                        .map(|s| {
+                            // Center each line horizontally by adding padding
+                            let terminal_width = content_area.width as usize;
+                            let line_len = s.len();
+                            if line_len < terminal_width {
+                                let padding = (terminal_width - line_len) / 2;
+                                let padded = format!("{}{}", " ".repeat(padding), s);
+                                Line::from(padded)
+                            } else {
+                                Line::from(s.as_str())
+                            }
+                        })
+                        .collect();
+
+                    all_lines.extend(content_lines);
+
+                    let text = Paragraph::new(all_lines)
+                        .block(Block::default())
+                        .style(Style::default().fg(Color::White).bg(Color::Black));
+                    f.render_widget(text, content_area);
+                } else {
+                    let empty = Paragraph::new("No text content loaded")
+                        .style(Style::default().fg(Color::DarkGray))
+                        .block(Block::default());
+                    f.render_widget(empty, content_area);
+                }
+            }
+            DisplayMode::Image => {
+                if let Some(ref mut image_state) = app.image_state {
+                    // Use Scale mode to resize the image to fill the available space
+                    // The widget will maintain aspect ratio and center it automatically
+                    let image_widget = StatefulImage::default()
+                        .resize(Resize::Scale(None));
+                    f.render_stateful_widget(image_widget, content_area, image_state);
+                } else {
+                    let empty = Paragraph::new("No image loaded")
+                        .style(Style::default().fg(Color::DarkGray))
+                        .block(Block::default());
+                    f.render_widget(empty, content_area);
+                }
+            }
         }
     } else {
         let loading = Paragraph::new("Loading page...")
@@ -226,7 +300,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     } else if !app.page_input_buffer.is_empty() {
         format!("  Go to page: {}_", app.page_input_buffer)
     } else {
-        "  [← /→ ] Page  [↑/↓] Sub-page  [0-9] Jump to page  [q] Quit  [c] Clear cache".to_string()
+        "  [← / →] Page  [↑/↓] Sub-page  [0-9] Jump  [v] Toggle view  [q] Quit  [c] Clear cache".to_string()
     };
 
     let footer_line = create_bar(&footer_text, "", size.width);
